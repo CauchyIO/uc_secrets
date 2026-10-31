@@ -1,0 +1,86 @@
+# Copy this file to terraform.tfvars and replace the placeholders.
+# terraform.tfvars is gitignored and loaded automatically by Terraform.
+
+# Subscription where the resource group, access connector, and Key Vault live.
+subscription_id = "00000000-0000-0000-0000-000000000000"
+
+# Entra tenant shared by the Databricks workspace, access connector, and Key Vault.
+tenant_id = "00000000-0000-0000-0000-000000000000"
+
+# Azure region; choose the same region as the Databricks workspace.
+location = "westeurope"
+
+# Optional local profile. Null uses standard Databricks environment/OIDC/SP auth.
+databricks_profile = null
+# databricks_profile = "workspace"
+
+# Numeric workspace ID, also used as the globally unique Key Vault name suffix.
+workspace_id = "000000000000000"
+
+# Existing APIM gateway and the named value containing the lane's shared secret.
+# This subscription may differ from the deployment subscription above.
+# shared_secret_name is the named-value identifier, never the secret value.
+apim = {
+  subscription_id    = "00000000-0000-0000-0000-000000000000"
+  resource_group     = "rg-ai-gateway"
+  service_name       = "apim-ai-gateway"
+  shared_secret_name = "example-lane-secret"
+}
+
+# Static-bearer Databricks lane that forwards OpenAI-compatible requests to LiteLLM.
+apim_lane_base_url = "https://apim-ai-gateway.azure-api.net/databricks/v1"
+
+# Managed storage path authorized for your Unity Catalog metastore.
+catalog_storage_root = "abfss://unity-catalog-storage@<storage-account>.dfs.core.windows.net/<metastore-or-workspace-id>"
+
+# Model aliases allowed by your lane's LiteLLM key.
+litellm_models = ["example-model"] # aliases your LiteLLM lane key may call; one target each on the provider service
+
+# Production defaults. The Terraform runner needs a working private network/DNS path
+# to manage Key Vault secrets when public access is disabled. AzureServices admits
+# Unity Catalog's trusted connector identity, not an arbitrary CI runner.
+public_network_access_enabled = false
+network_acls = {
+  default_action             = "Deny"
+  bypass                     = "AzureServices"
+  ip_rules                   = []
+  virtual_network_subnet_ids = []
+}
+purge_protection_enabled    = true  # cannot be disabled after enabling it
+soft_delete_retention_days   = 90    # changing this replaces the vault
+purge_soft_delete_on_destroy = false
+catalog_force_destroy       = false
+schema_force_destroy        = false
+create_deployer_role_assignment = true # false if deployment RBAC is managed separately
+create_dummy_secret             = false # true only in a test deployment for measurements/
+tags = {}
+# tags = { environment = "production", managed_by = "terraform" }
+# catalog_comment = "Governed external secrets and Unity Gateway backed by Azure Key Vault."
+
+# Optional, shown with their defaults. Names: lowercase; secret names are single lowercase words while External
+# secrets for Unity Catalog is in Beta, so the Key Vault and Unity Catalog names stay identical.
+# name                = "uc-secrets-demo"    # Azure names rg-/id-/dbac-/law-/nsp-/ncc-<name>; UC names with underscores
+# catalog_name        = "uc_secrets_demo"
+# schema_name         = "secrets"
+# lane_secret_name    = "apimlanekey"
+# dummy_secret_name   = "dummysecret"
+# lane_secret_version = 1                    # increment to copy the APIM named value into Key Vault again
+# apim_endpoint_route = "chat/completions"
+
+# Optional audit-log workspace and diagnostic setting; may incur ingestion charges.
+enable_diagnostics = false
+
+# Optional principal granted EXECUTE on the model provider service.
+# caller_principal = "<user-group-or-service-principal>"
+
+# Optional NCC private endpoint from serverless compute to the vault (ncc.tf). Hourly billed; binding is permanent.
+# Turning it on also needs databricks_account_id.
+enable_ncc_private_endpoint = false
+# databricks_account_id = "00000000-0000-0000-0000-000000000000"
+# databricks_account_auth_type = null # or "azure-cli" locally; environment/OIDC/SP in CI
+
+# Optional Network Security Perimeter around the vault (nsp.tf). Free. The association starts in Learning mode, which
+# changes nothing about who can read the secret until nsp_access_mode is switched to Enforced.
+enable_network_security_perimeter = false
+# nsp_access_mode                  = "Learning"   # Learning | Audit | Enforced
+# nsp_admit_connector_subscription = false        # inbound rule for the subscription that holds the connector's identity
