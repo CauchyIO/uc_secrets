@@ -1,38 +1,38 @@
-# Binds a Unity Catalog schema to an external secret store (Beta `secret_storage`, no provider resource yet) through
-# uc_secret_storage.py, which calls the Databricks CLI using unified authentication. The provisioners are deliberate: they are
-# the compatibility adapter for this API until databricks_schema exposes secret_storage.
+# Binds a Unity Catalog schema to an external secret store via uc_secret_storage.py
+# until databricks_schema exposes secret_storage natively (CauchyIO/terraform-provider-databricks#1).
 
 locals {
   schema_full_name = "${var.catalog_name}.${var.schema_name}"
   helper_script    = "${path.module}/uc_secret_storage.py"
+  profile          = coalesce(var.databricks_profile, "")
+  is_bound = (
+    data.external.binding_state.result.storage_type == "STORAGE_TYPE_EXTERNAL" &&
+    data.external.binding_state.result.connection_name == var.connection_name
+  )
 }
 
-# Drift detection: query the current schema secret_storage state during plan/refresh.
 data "external" "binding_state" {
   program = ["python3", local.helper_script, "read-binding"]
 
   query = {
-    profile = var.databricks_profile == null ? "" : var.databricks_profile
-    schema  = local.schema_full_name
-    # Not used by the helper. While the schema does not exist yet its id is unknown, so Terraform defers this read to
-    # apply (after the schema is created) instead of reading a missing schema during plan.
-    schema_id = var.schema_id
+    profile   = local.profile
+    schema    = local.schema_full_name
+    schema_id = var.schema_id # Defers read until the schema exists on first apply.
   }
 }
 
 resource "terraform_data" "binding" {
   input = {
     script     = local.helper_script
-    profile    = var.databricks_profile == null ? "" : var.databricks_profile
+    profile    = local.profile
     schema     = local.schema_full_name
     connection = var.connection_name
   }
 
-  # Re-apply if the target schema/connection changes OR if the live schema binding drifted outside Terraform.
   triggers_replace = [
     local.schema_full_name,
     var.connection_name,
-    data.external.binding_state.result.storage_type == "STORAGE_TYPE_EXTERNAL" && data.external.binding_state.result.connection_name == var.connection_name ? "bound" : "drifted",
+    local.is_bound ? "bound" : "drifted",
   ]
 
   provisioner "local-exec" {
@@ -56,15 +56,12 @@ resource "terraform_data" "binding" {
   }
 }
 
-# Read-verified secret discovery: lists the bound schema (triggering lazy import from Key Vault)
-# and returns each secret's Unity Catalog metadata (`full_name`, `securable_kind`, `external_secret_id`).
 data "external" "secret" {
   for_each = var.secret_names
-
-  program = ["python3", local.helper_script, "read-secret"]
+  program  = ["python3", local.helper_script, "read-secret"]
 
   query = {
-    profile         = var.databricks_profile == null ? "" : var.databricks_profile
+    profile         = local.profile
     catalog         = var.catalog_name
     schema          = var.schema_name
     secret          = each.value
